@@ -1,0 +1,239 @@
+Project: QuizApp ("Kahoot-Lite") Technical Specification
+1. Overview
+A real-time, mobile-first quiz application hosted on Vercel. A single Admin controls the game flow, while multiple Players answer questions on their devices.
+
+key Architecture Decision
+Hosting: Vercel (Next.js)
+
+Database & Realtime Sync: Firebase Realtime Database.
+
+Why: Vercel functions are stateless (they shut down immediately). Firebase acts as the "always-on" memory and instantly pushes updates to all phones without complex server setups.
+
+2. Technical Stack
+Framework: Next.js 14+ (App Router, TypeScript)
+
+Styling: Tailwind CSS (Mobile-first)
+
+Backend: Firebase Realtime Database (Client-side SDK)
+
+State Logic: React Hooks + Firebase Subscription
+
+Icons: Lucide React (optional, for UI polish)
+
+3. Data Models (types.ts)
+Create a shared file src/types.ts to ensure the Admin and Player speak the same language.
+
+TypeScript
+export type GameStatus = 'LOBBY' | 'QUESTION_ACTIVE' | 'REVEAL_ANSWER' | 'LEADERBOARD';
+
+export type QuestionType = 'MCQ' | 'TEXT';
+
+export interface Question {
+  id: number;
+  text: string;
+  type: QuestionType;
+  options?: string[]; // Defined only for MCQ
+  correctAnswer: string | string[]; // Can be array for multiple valid text answers
+}
+
+export interface Player {
+  id: string;          // UUID from localStorage
+  name: string;
+  score: number;
+  currentAnswer: string; // What they have locked in
+  liveTyping: string;    // What they are currently typing (for Admin view)
+}
+
+// The Main Source of Truth in Firebase
+export interface GameState {
+  status: GameStatus;
+  currentQuestionIndex: number;
+  players: Record<string, Player>; // Map of ID -> Player
+}
+4. Implementation Guide: Step-by-Step
+Phase 1: Environment Setup
+Initialize Next.js:
+
+Bash
+npx create-next-app@latest quiz-app --typescript --tailwind --eslint
+Install Dependencies:
+
+Bash
+npm install firebase uuid fast-levenshtein clsx tailwind-merge
+Setup Firebase:
+
+Go to Firebase Console.
+
+Assume the firebase project has been set up correctly.
+
+Copy your web config keys into .env.local:
+
+Code snippet
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=...
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+Initialize Firebase Code (src/lib/firebase.ts):
+
+TypeScript
+import { initializeApp } from "firebase/app";
+import { getDatabase } from "firebase/database";
+
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  // ... rest of config
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+};
+
+const app = initializeApp(firebaseConfig);
+export const db = getDatabase(app);
+Phase 2: The Questions (src/lib/questions.ts)
+Hardcode your content here.
+
+TypeScript
+import { Question } from '@/types';
+
+export const QUESTIONS: Question[] = [
+  {
+    id: 1,
+    text: "What represents the letter 'K' in NATO phonetic alphabet?",
+    type: 'MCQ',
+    options: ['Kilo', 'King', 'Kite', 'Karma'],
+    correctAnswer: 'Kilo'
+  },
+  {
+    id: 2,
+    text: "Name the capital of France.",
+    type: 'TEXT',
+    correctAnswer: 'Paris' // Logic will handle case-insensitivity
+  }
+];
+Phase 3: Player Implementation (src/app/page.tsx)
+This is the main entry point. It needs to handle:
+
+Identity: Check localStorage for a user ID. If none, generate one.
+
+Routing:
+
+If !player.name: Show Login Screen.
+
+If player.name: Show Game Screen (which changes based on gameState.status).
+
+Key Logic:
+
+Use onValue from Firebase to listen to /game/status and /game/currentQuestionIndex.
+
+Debounce Input: When answering a text question, update liveTyping in Firebase every ~300ms so the admin can see it, but don't hammer the database on every keystroke.
+
+Phase 4: Admin Implementation (src/app/admin/page.tsx)
+Protect the route: A simple if (searchParams.code !== 'admin123') return <AccessDenied />.
+
+Controls:
+
+"Next Question" Button:
+
+Increments currentQuestionIndex.
+
+Sets status to QUESTION_ACTIVE.
+
+Clears currentAnswer and liveTyping for all players in DB.
+
+"Reveal Answer" Button:
+
+Sets status to REVEAL_ANSWER.
+
+CRITICAL: Runs the scoring loop locally and updates Firebase.
+
+The Scoring Logic (Admin Side Code):
+
+TypeScript
+const handleReveal = async () => {
+  // 1. Get current snapshot of players
+  const playersRef = ref(db, 'game/players');
+  const snapshot = await get(playersRef);
+  const players = snapshot.val();
+
+  // 2. Calculate scores
+  const updates = {};
+  Object.keys(players).forEach(playerId => {
+    const player = players[playerId];
+    const isCorrect = checkAnswer(player.currentAnswer, currentQuestion); // See Phase 5
+
+    if (isCorrect) {
+      updates[`${playerId}/score`] = player.score + 100;
+    }
+  });
+
+  // 3. Atomic update to DB (Update scores AND status simultaneously)
+  await update(ref(db, 'game'), {
+    status: 'REVEAL_ANSWER',
+    [`players`]: { ...players, ...updates } // Simplified for brevity; use deeper paths in prod
+  });
+};
+Phase 5: The Fuzzy Match Algorithm
+Create a utility function checkAnswer in src/lib/utils.ts.
+
+TypeScript
+import levenshtein from 'fast-levenshtein';
+
+export function checkAnswer(playerInput: string, correctAnswer: string): boolean {
+  if (!playerInput) return false;
+
+  const cleanInput = playerInput.trim().toLowerCase();
+  const cleanCorrect = correctAnswer.trim().toLowerCase();
+
+  // 1. Exact Match (normalized)
+  if (cleanInput === cleanCorrect) return true;
+
+  // 2. Levenshtein Distance (Allow 1 mistake)
+  const distance = levenshtein.get(cleanInput, cleanCorrect);
+  return distance <= 1;
+}
+5. UI Structure (Wireframes)
+A. Player UI
+Lobby:
+
+Centered Box.
+
+Header: "Waiting for Host..."
+
+Big Text: "Welcome, [PlayerName]"
+
+Question Active (MCQ):
+
+Top: Question Text.
+
+Grid (2x2): 4 Colored Buttons (Red, Blue, Yellow, Green).
+
+Question Active (Text):
+
+Top: Question Text.
+
+Center: Large Input Field.
+
+Bottom: "Submit" Button (Disables after click).
+
+Reveal:
+
+Full screen background color change.
+
+Green + "Correct!" or Red + "Incorrect".
+
+Current Score displayed.
+
+B. Admin UI
+Top Bar: Current Question Text | Status Badge (Active/Reveal)
+
+Main Content: Grid of Player Cards.
+
+Card: Name, Score, and liveTyping text (faded if typing, bold if submitted).
+
+Bottom Bar (Sticky):
+
+[Prev Q] [Next Q]
+
+[Reveal Answer]
+
+[Show Leaderboard]
+
+[Reset Game]
