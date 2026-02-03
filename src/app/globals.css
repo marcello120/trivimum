@@ -1,0 +1,192 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer components {
+  /* Fade animations */
+  .animate-fade-in {
+    animation: fadeIn 0.6s ease-out;
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.8s ease-out;
+  }
+
+  .animate-slide-down {
+    animation: slideDown 0.6s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out;
+  }
+
+  .animate-scale-up {
+    animation: scaleUp 0.5s ease-out;
+  }
+
+  .animate-bounce-slow {
+    animation: bounceGentle 2s infinite;
+  }
+
+  .animate-bounce-once {
+    animation: bounceOnce 0.8s ease-out;
+  }
+
+  .animate-pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
+
+  .hover\:scale-102:hover {
+    transform: scale(1.02);
+  }
+
+  /* Collapsible animations */
+  .collapsible-enter {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  .collapsible-enter-active {
+    max-height: 500px;
+    opacity: 1;
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+  }
+
+  .collapsible-exit {
+    max-height: 500px;
+    opacity: 1;
+    overflow: hidden;
+  }
+
+  .collapsible-exit-active {
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease-in, opacity 0.3s ease-in;
+  }
+
+  /* FAB animations */
+  .fab-panel {
+    transform-origin: bottom right;
+    animation: fabPanelIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .fab-button {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .fab-button:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Keyframe definitions */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleUp {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes bounceGentle {
+    0%, 20%, 50%, 80%, 100% {
+      transform: translateY(0);
+    }
+    40% {
+      transform: translateY(-10px);
+    }
+    60% {
+      transform: translateY(-5px);
+    }
+  }
+
+  @keyframes bounceOnce {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.2);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% {
+      box-shadow: 0 0 20px rgba(234, 179, 8, 0.4);
+    }
+    50% {
+      box-shadow: 0 0 30px rgba(234, 179, 8, 0.8);
+    }
+  }
+
+  @keyframes fabPanelIn {
+    from {
+      opacity: 0;
+      transform: scale(0.8) translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+}
