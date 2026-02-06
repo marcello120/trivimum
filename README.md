@@ -1,4 +1,4 @@
-# QuizApp - Kahoot Lite
+# Trivimum
 
 A real-time, mobile-first quiz application built with Next.js, Firebase, and TypeScript. Perfect for interactive quizzes, classroom activities, and team building events.
 

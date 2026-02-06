@@ -1,4 +1,4 @@
-Project: QuizApp ("Kahoot-Lite") Technical Specification
+Project: QuizApp ("Trivimum") Technical Specification
 1. Overview
 A real-time, mobile-first quiz application hosted on Vercel. A single Admin controls the game flow, while multiple Players answer questions on their devices.
 
