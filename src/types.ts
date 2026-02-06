@@ -16,6 +16,7 @@ export interface Player {
   score: number;
   currentAnswer: string; // What they have locked in
   liveTyping: string;    // What they are currently typing (for Admin view)
+  manuallyCorrectAnswers: number;
 }
 
 // The Main Source of Truth in Firebase
@@ -24,6 +25,7 @@ export interface GameState {
   currentQuestionIndex: number;
   players: Record<string, Player>; // Map of ID -> Player
   previousStatus?: GameStatus; // Track state before showing leaderboard
+  selectedQuizId?: string; // ID of the currently selected quiz
 }
 
 // Re-export error types for convenience

@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { GameState, Player } from '@/types';
-import { QUESTIONS } from '@/lib/questions';
+import { QUESTIONS, getQuizById, fetchQuizById } from '@/lib/questions';
 import LoginScreen from '@/components/LoginScreen';
 import GameScreen from '@/components/GameScreen';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -16,6 +16,8 @@ export default function Home() {
   const [playerName, setPlayerName] = useState<string>('');
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
+  const [currentQuizQuestions, setCurrentQuizQuestions] = useState(QUESTIONS);
+  const [isLoadingQuiz, setIsLoadingQuiz] = useState(false);
   const [errorState, setErrorState] = useState<ErrorState>({
     hasError: false,
     error: null,
@@ -26,7 +28,7 @@ export default function Home() {
   const [connectionTimeout, setConnectionTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Helper function to clear player data and reset state
-  const clearPlayerData = (reason: string) => {
+  const clearPlayerData = useCallback((reason: string) => {
     console.log(`Clearing player data: ${reason}`);
     localStorage.removeItem('quizapp_player_name');
     setPlayerName('');
@@ -35,7 +37,7 @@ export default function Home() {
       clearTimeout(connectionTimeout);
       setConnectionTimeout(null);
     }
-  };
+  }, [connectionTimeout]);
 
   // Initialize player identity
   useEffect(() => {
@@ -125,6 +127,38 @@ export default function Home() {
     };
   }, [playerId, connectionTimeout]);
 
+  // Load quiz questions when selectedQuizId changes
+  useEffect(() => {
+    if (!gameState?.selectedQuizId) {
+      // No quiz selected, use default questions
+      setCurrentQuizQuestions(QUESTIONS);
+      return;
+    }
+
+    const loadQuizQuestions = async () => {
+      setIsLoadingQuiz(true);
+      try {
+        const quiz = await fetchQuizById(gameState.selectedQuizId!);
+        if (quiz && quiz.questions) {
+          setCurrentQuizQuestions(quiz.questions);
+        } else {
+          // Fallback to hardcoded quiz data
+          const fallbackQuiz = getQuizById(gameState.selectedQuizId!);
+          setCurrentQuizQuestions(fallbackQuiz?.questions || QUESTIONS);
+        }
+      } catch (error) {
+        console.error('Failed to load quiz questions, using fallback:', error);
+        // Fallback to hardcoded quiz data
+        const fallbackQuiz = getQuizById(gameState.selectedQuizId!);
+        setCurrentQuizQuestions(fallbackQuiz?.questions || QUESTIONS);
+      } finally {
+        setIsLoadingQuiz(false);
+      }
+    };
+
+    loadQuizQuestions();
+  }, [gameState?.selectedQuizId]);
+
   // Auto-cleanup localStorage if player is stuck connecting for too long
   useEffect(() => {
     if (playerName && !currentPlayer && !isLoading) {
@@ -166,7 +200,8 @@ export default function Home() {
       name: trimmedName,
       score: 0,
       currentAnswer: '',
-      liveTyping: ''
+      liveTyping: '',
+      manuallyCorrectAnswers: 0
     };
 
     try {
@@ -188,7 +223,7 @@ export default function Home() {
     }
   };
 
-  const updateLiveTyping = async (text: string) => {
+  const updateLiveTyping = useCallback(async (text: string) => {
     if (!playerId) return;
 
     try {
@@ -207,9 +242,9 @@ export default function Home() {
       // Silently fail for live typing - it's not critical
       console.warn('Live typing update failed after retries');
     }
-  };
+  }, [playerId]);
 
-  const submitAnswer = async (answer: string) => {
+  const submitAnswer = useCallback(async (answer: string) => {
     if (!playerId || !answer.trim()) return;
 
     try {
@@ -239,7 +274,7 @@ export default function Home() {
         // The error state was already set in the onError callback
       }
     }
-  };
+  }, [playerId]);
 
   // Show loading while initializing
   if (!playerId || isLoading) {
@@ -323,9 +358,10 @@ export default function Home() {
           <GameScreen
             gameState={gameState}
             currentPlayer={currentPlayer}
-            questions={QUESTIONS}
+            questions={currentQuizQuestions}
             onUpdateLiveTyping={updateLiveTyping}
             onSubmitAnswer={submitAnswer}
+            isLoadingQuiz={isLoadingQuiz}
           />
         )}
       </div>

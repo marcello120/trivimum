@@ -15,6 +15,86 @@
 }
 
 @layer components {
+  /* Mobile keyboard handling */
+  .mobile-keyboard-compact {
+    /* Default spacing for when keyboard is not visible */
+    margin-bottom: 0.5rem; /* mb-2 */
+  }
+
+  /* Use dynamic viewport height for better mobile keyboard detection */
+  .mobile-keyboard-container {
+    min-height: 100vh;
+    min-height: 100dvh; /* Dynamic viewport height - accounts for mobile UI chrome */
+  }
+
+  /* When viewport height is significantly reduced (keyboard likely open) */
+  @media screen and (max-height: 500px) and (max-width: 768px) {
+    .mobile-keyboard-compact {
+      margin-bottom: 0.25rem; /* mb-1 */
+    }
+
+    .mobile-keyboard-compact-answers {
+      padding-top: 0.25rem; /* pt-1 */
+    }
+
+    /* Reduce question header padding when keyboard is open */
+    .mobile-keyboard-question-header {
+      padding-top: 0.75rem; /* py-3 instead of py-4 */
+      padding-bottom: 0.75rem;
+    }
+
+    /* Make container more compact */
+    .mobile-keyboard-container {
+      min-height: 100vh;
+      min-height: calc(100vh - env(keyboard-inset-height, 0px)); /* iOS support */
+    }
+  }
+
+  /* Even more aggressive spacing for very small screens with keyboard */
+  @media screen and (max-height: 400px) and (max-width: 768px) {
+    .mobile-keyboard-compact {
+      margin-bottom: 0; /* mb-0 */
+    }
+
+    .mobile-keyboard-compact-answers {
+      padding-top: 0; /* pt-0 */
+    }
+
+    .mobile-keyboard-question-header {
+      padding-top: 0.5rem; /* py-2 */
+      padding-bottom: 0.5rem;
+    }
+  }
+
+  /* Additional support for landscape mobile with keyboard */
+  @media screen and (max-height: 320px) and (orientation: landscape) and (max-width: 768px) {
+    .mobile-keyboard-compact {
+      margin-bottom: 0; /* mb-0 */
+    }
+
+    .mobile-keyboard-compact-answers {
+      padding-top: 0; /* pt-0 */
+    }
+
+    .mobile-keyboard-question-header {
+      padding-top: 0.25rem; /* py-1 */
+      padding-bottom: 0.25rem;
+    }
+  }
+
+  /* Text input specific optimizations for mobile keyboard */
+  @media screen and (max-height: 500px) and (max-width: 768px) {
+    .mobile-text-input {
+      font-size: 16px; /* Prevent zoom on iOS */
+      padding: 0.75rem 1rem; /* Slightly reduce padding when keyboard is open */
+    }
+
+    .mobile-submit-button {
+      padding: 0.75rem 1rem; /* Match input padding */
+      margin-top: 0.5rem; /* Reduce gap between input and button */
+    }
+  }
+
   /* Fade animations */
   .animate-fade-in {
     animation: fadeIn 0.6s ease-out;

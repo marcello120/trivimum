@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'QuizApp - Kahoot Lite',
-  description: 'A real-time, mobile-first quiz application',
+  title: 'Trivimum',
+  description: 'A minimal, real-time, mobile-first quiz app',
 }
 
 export default function RootLayout({

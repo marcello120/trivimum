@@ -1,12 +1,18 @@
 'use client';
 
-import {useEffect, useState} from 'react';
+import {memo, useCallback, useEffect, useMemo, useState} from 'react';
 import {useSearchParams} from 'next/navigation';
-import {GameState, Player} from '@/types';
-import {QUESTIONS} from '@/lib/questions';
+import {GameState, Player, Question} from '@/types';
+import {AVAILABLE_QUIZZES, getQuizById, QUESTIONS, fetchQuizzes, fetchQuizById, initializeFirebaseQuizzes, Quiz} from '@/lib/questions';
 import {checkAnswer} from '@/lib/utils';
 import {ErrorBoundary} from '@/components/ErrorBoundary';
 import ConnectionStatus from '@/components/ConnectionStatus';
+import {PlayerGrid} from '@/components/PlayerGrid';
+import {QuizSelection} from '@/components/QuizSelection';
+import {QuizPreview} from '@/components/QuizPreview';
+import {EditableQuizPreview} from '@/components/EditableQuizPreview';
+import {ControlPanel} from '@/components/ControlPanel';
+import {CurrentQuizInfo} from '@/components/CurrentQuizInfo';
 import {FirebaseOperationError, safeGet, safeListener, safeSet, safeUpdate} from '@/lib/firebaseOperations';
 import {ErrorState, FirebaseError} from '@/types/errors';
 import {getPlayerList, normalizeGameState} from '@/lib/gameStateHelpers';
@@ -16,21 +22,14 @@ import {
     Clock,
     ExternalLink,
     Eye,
-    EyeOff,
     Loader2,
     MessageSquare,
-    Play,
-    RefreshCw,
-    Settings,
-    SkipBack,
-    SkipForward,
     Trophy,
     Users,
-    X,
     Zap
 } from 'lucide-react';
 
-export default function AdminPageContent() {
+function AdminPageContent() {
     const searchParams = useSearchParams();
     const [gameState, setGameState] = useState<GameState | null>(null);
     const [isAuthorized, setIsAuthorized] = useState(false);
@@ -44,6 +43,13 @@ export default function AdminPageContent() {
     const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
     const [isQuestionSectionCollapsed, setIsQuestionSectionCollapsed] = useState(false);
     const [isControlPanelExpanded, setIsControlPanelExpanded] = useState(false);
+    const [localSelectedQuizId, setLocalSelectedQuizId] = useState<string | undefined>(undefined);
+    const [viewMode, setViewMode] = useState<'admin' | 'quiz-preview' | 'quiz-edit'>('admin');
+    const [previewQuizId, setPreviewQuizId] = useState<string | undefined>(undefined);
+    const [availableQuizzes, setAvailableQuizzes] = useState(AVAILABLE_QUIZZES); // Start with hardcoded fallback
+    const [isLoadingQuizzes, setIsLoadingQuizzes] = useState(false);
+    const [currentQuiz, setCurrentQuiz] = useState<Quiz | null>(null);
+    const [previewQuiz, setPreviewQuiz] = useState<Quiz | null>(null);
 
     // Check authorization
     useEffect(() => {
@@ -52,6 +58,30 @@ export default function AdminPageContent() {
             setIsAuthorized(true);
         }
     }, [searchParams]);
+
+    // Fetch quizzes from Firebase
+    useEffect(() => {
+        if (!isAuthorized) return;
+
+        const loadQuizzes = async () => {
+            setIsLoadingQuizzes(true);
+            try {
+                // Try to initialize Firebase quizzes first (will skip if already exists)
+                await initializeFirebaseQuizzes();
+
+                // Fetch quizzes from Firebase
+                const quizzes = await fetchQuizzes();
+                setAvailableQuizzes(quizzes);
+            } catch (error) {
+                console.error('Failed to load quizzes from Firebase, using hardcoded fallback:', error);
+                // availableQuizzes is already initialized with AVAILABLE_QUIZZES as fallback
+            } finally {
+                setIsLoadingQuizzes(false);
+            }
+        };
+
+        loadQuizzes();
+    }, [isAuthorized]);
 
     // Listen to game state
     useEffect(() => {
@@ -116,19 +146,92 @@ export default function AdminPageContent() {
         return unsubscribe;
     }, [isAuthorized]);
 
-    const handleNextQuestion = async () => {
+    // Sync local selected quiz ID with game state on initial load
+    useEffect(() => {
+        if (gameState && localSelectedQuizId === undefined) {
+            setLocalSelectedQuizId(gameState.selectedQuizId);
+        }
+    }, [gameState?.selectedQuizId, localSelectedQuizId]);
+
+    // Load current quiz when selection changes
+    useEffect(() => {
+        if (!localSelectedQuizId) {
+            setCurrentQuiz(null);
+            return;
+        }
+
+        const loadCurrentQuiz = async () => {
+            try {
+                const quiz = await fetchQuizById(localSelectedQuizId);
+                setCurrentQuiz(quiz || null);
+            } catch (error) {
+                console.error('Failed to load current quiz, using hardcoded fallback:', error);
+                // Fallback to hardcoded data
+                const fallbackQuiz = getQuizById(localSelectedQuizId);
+                setCurrentQuiz(fallbackQuiz || null);
+            }
+        };
+
+        loadCurrentQuiz();
+    }, [localSelectedQuizId]);
+
+    // Load preview quiz when preview ID changes
+    useEffect(() => {
+        if (!previewQuizId || previewQuizId.trim() === '') {
+            setPreviewQuiz(null);
+            return;
+        }
+
+        const loadPreviewQuiz = async () => {
+            // If we already have a preview quiz with the same ID, don't fetch again
+            // This handles the case where we create a new quiz locally
+            if (previewQuiz && previewQuiz.id === previewQuizId) {
+                return;
+            }
+
+            try {
+                const quiz = await fetchQuizById(previewQuizId);
+                setPreviewQuiz(quiz || null);
+            } catch (error) {
+                console.error('Failed to load preview quiz, using hardcoded fallback:', error);
+                // Fallback to hardcoded data
+                const fallbackQuiz = getQuizById(previewQuizId);
+                setPreviewQuiz(fallbackQuiz || null);
+            }
+        };
+
+        loadPreviewQuiz();
+    }, [previewQuizId]);
+
+    const currentQuestions = useMemo(() =>
+            currentQuiz?.questions || [],
+        [currentQuiz]
+    );
+
+    const currentQuestion = useMemo(() =>
+            gameState ? currentQuestions[gameState.currentQuestionIndex] : null,
+        [currentQuestions, gameState?.currentQuestionIndex]
+    );
+
+    const playerList = useMemo(() =>
+            getPlayerList(gameState),
+        [gameState?.players]
+    );
+
+    const handleNextQuestion = useCallback(async () => {
         if (!gameState || operationInProgress) return;
 
         const nextIndex = gameState.currentQuestionIndex + 1;
-        if (nextIndex >= QUESTIONS.length) return;
+        if (nextIndex >= currentQuestions.length) return;
 
         setOperationInProgress('nextQuestion');
 
-        // Clear all player answers
+        // Clear all player answers and manual overrides
         const updates: Record<string, any> = {};
         Object.keys(gameState.players || {}).forEach(playerId => {
             updates[`players/${playerId}/currentAnswer`] = '';
             updates[`players/${playerId}/liveTyping`] = '';
+            updates[`players/${playerId}/manuallyCorrectAnswers`] = 0;
         });
 
         updates.status = 'QUESTION_ACTIVE';
@@ -161,12 +264,12 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.currentQuestionIndex, gameState?.players, operationInProgress, currentQuestions.length]);
 
-    const handleRevealAnswer = async () => {
+    const handleRevealAnswer = useCallback(async () => {
         if (!gameState || operationInProgress) return;
 
-        const currentQuestion = QUESTIONS[gameState.currentQuestionIndex];
+        const currentQuestion = currentQuestions[gameState.currentQuestionIndex];
         if (!currentQuestion) return;
 
         setOperationInProgress('revealAnswer');
@@ -193,11 +296,16 @@ export default function AdminPageContent() {
             const updatedPlayers: Record<string, Player> = {};
             Object.keys(players).forEach(playerId => {
                 const player = players[playerId];
-                const isCorrect = checkAnswer(player.currentAnswer, currentQuestion);
+                const isAutomaticallyCorrect = checkAnswer(player.currentAnswer, currentQuestion);
+                const isManuallyCorrect = !!player.manuallyCorrectAnswers;
+                const isCorrect = isAutomaticallyCorrect || isManuallyCorrect;
+
+                // Ensure score is a valid number, default to 0 if NaN or not a number
+                const currentScore = typeof player.score === 'number' && !isNaN(player.score) ? player.score : 0;
 
                 updatedPlayers[playerId] = {
                     ...player,
-                    score: isCorrect ? player.score + 100 : player.score
+                    score: isCorrect ? currentScore + 100 : currentScore
                 };
             });
 
@@ -231,9 +339,9 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.currentQuestionIndex, operationInProgress, currentQuestions]);
 
-    const handleShowLeaderboard = async () => {
+    const handleShowLeaderboard = useCallback(async () => {
         if (operationInProgress || !gameState) return;
 
         setOperationInProgress('showLeaderboard');
@@ -264,9 +372,9 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.status, operationInProgress]);
 
-    const handleHideLeaderboard = async () => {
+    const handleHideLeaderboard = useCallback(async () => {
         if (operationInProgress || !gameState) return;
 
         setOperationInProgress('hideLeaderboard');
@@ -299,20 +407,21 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.previousStatus, operationInProgress]);
 
-    const handlePreviousQuestion = async () => {
+    const handlePreviousQuestion = useCallback(async () => {
         if (!gameState || operationInProgress || gameState.currentQuestionIndex <= 0) return;
 
         setOperationInProgress('previousQuestion');
 
         const prevIndex = gameState.currentQuestionIndex - 1;
 
-        // Clear all player answers
+        // Clear all player answers and manual overrides
         const updates: Record<string, any> = {};
         Object.keys(gameState.players || {}).forEach(playerId => {
             updates[`players/${playerId}/currentAnswer`] = '';
             updates[`players/${playerId}/liveTyping`] = '';
+            updates[`players/${playerId}/manuallyCorrectAnswers`] = 0;
         });
 
         updates.status = 'REVEAL_ANSWER'; // Go to reveal state for previous question
@@ -345,7 +454,7 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.currentQuestionIndex, gameState?.players, operationInProgress]);
 
     const handleResetGame = async () => {
         if (operationInProgress) return;
@@ -355,12 +464,16 @@ export default function AdminPageContent() {
 
         setOperationInProgress('resetGame');
 
+        // Clear local selected quiz as well
+        setLocalSelectedQuizId(undefined);
+
         try {
             const initialState: GameState = {
                 status: 'LOBBY',
                 currentQuestionIndex: 0,
                 players: {}
-                // previousStatus omitted - it will be undefined by default
+                // selectedQuizId and previousStatus omitted - they will be undefined by default
+                // Firebase doesn't accept undefined values, so we omit optional properties instead
             };
 
             await safeSet('game', initialState, {
@@ -387,20 +500,100 @@ export default function AdminPageContent() {
         }
     };
 
-    const handleStartQuestion = async () => {
+    const handleSelectQuiz = useCallback((quizId: string) => {
+        if (operationInProgress) return;
+        setLocalSelectedQuizId(quizId || undefined);
+    }, [operationInProgress]);
+
+    const handleClearQuizSelection = useCallback(() => handleSelectQuiz(''), [handleSelectQuiz]);
+
+    const handlePreviewQuestions = useCallback(async (quizId: string) => {
+        try {
+            const quiz = await fetchQuizById(quizId);
+            if (quiz) {
+                setPreviewQuizId(quizId);
+                setViewMode('quiz-preview');
+            }
+        } catch (error) {
+            console.error('Failed to fetch quiz for preview, using hardcoded fallback:', error);
+            // Fallback to hardcoded data
+            const fallbackQuiz = getQuizById(quizId);
+            if (fallbackQuiz) {
+                setPreviewQuizId(quizId);
+                setViewMode('quiz-preview');
+            }
+        }
+    }, []);
+
+    const handleEditQuiz = useCallback(async (quizId: string) => {
+        try {
+            const quiz = await fetchQuizById(quizId);
+            if (quiz) {
+                setPreviewQuizId(quizId);
+                setViewMode('quiz-edit');
+            }
+        } catch (error) {
+            console.error('Failed to fetch quiz for editing, using hardcoded fallback:', error);
+            // Fallback to hardcoded data
+            const fallbackQuiz = getQuizById(quizId);
+            if (fallbackQuiz) {
+                setPreviewQuizId(quizId);
+                setViewMode('quiz-edit');
+            }
+        }
+    }, []);
+
+    const handleCreateNewQuiz = useCallback(() => {
+        // Generate a unique ID for the new quiz
+        const newQuizId = `quiz-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+        // Create a new empty quiz
+        const newQuiz: Quiz = {
+            id: newQuizId,
+            title: 'New Quiz',
+            description: 'A new quiz waiting to be created',
+            questions: [
+                {
+                    id: 1,
+                    text: 'Sample question - edit this text',
+                    type: 'TEXT',
+                    correctAnswer: ''
+                }
+            ]
+        };
+
+        // Set the new quiz as preview quiz and switch to edit mode
+        setPreviewQuiz(newQuiz);
+        setPreviewQuizId(newQuizId);
+        setViewMode('quiz-edit');
+    }, []);
+
+    const handleBackToAdmin = useCallback(() => {
+        setViewMode('admin');
+        setPreviewQuizId(undefined);
+    }, []);
+
+    const handleStartQuestion = useCallback(async () => {
         if (!gameState || operationInProgress) return;
 
         setOperationInProgress('startQuestion');
 
-        // Clear all player answers and start first question
+        // Clear all player answers and manual overrides, start first question
         const updates: Record<string, any> = {};
         Object.keys(gameState.players || {}).forEach(playerId => {
             updates[`players/${playerId}/currentAnswer`] = '';
             updates[`players/${playerId}/liveTyping`] = '';
+            updates[`players/${playerId}/manuallyCorrectAnswers`] = 0;
         });
 
         updates.status = 'QUESTION_ACTIVE';
         updates.previousStatus = null; // Remove the field from Firebase
+
+        // Persist the locally selected quiz to Firebase when starting
+        if (localSelectedQuizId) {
+            updates.selectedQuizId = localSelectedQuizId;
+            updates.currentQuestionIndex = 0; // Reset to first question
+        }
 
         try {
             await safeUpdate('game', updates, {
@@ -424,7 +617,84 @@ export default function AdminPageContent() {
         } finally {
             setOperationInProgress(null);
         }
-    };
+    }, [gameState?.players, operationInProgress, localSelectedQuizId]);
+
+    const handleManualOverride = useCallback(async (playerId: string) => {
+        if (!gameState || operationInProgress) return;
+
+        setOperationInProgress('manualOverride');
+
+        try {
+            const player = gameState.players[playerId];
+
+            if (!player) return;
+
+            // Set the manual override flag for this player
+            // Only update the override status, don't change score here
+            // Score will be calculated correctly in handleRevealAnswer
+            await safeUpdate(`game/players/${playerId}`, {
+                manuallyCorrectAnswers: 1
+            }, {
+                retries: 3,
+                onError: (error) => {
+                    setErrorState({
+                        hasError: true,
+                        error: {
+                            ...error,
+                            context: 'Failed to manually override answer'
+                        },
+                        isRetrying: false,
+                        retryCount: 0
+                    });
+                }
+            });
+        } catch (error) {
+            if (error instanceof FirebaseOperationError) {
+                console.error('Failed to manually override answer after retries:', error.firebaseError);
+            }
+        } finally {
+            setOperationInProgress(null);
+        }
+    }, [gameState, operationInProgress]);
+
+    const handleRemoveOverride = useCallback(async (playerId: string) => {
+        if (!gameState || operationInProgress) return;
+
+        setOperationInProgress('removeOverride');
+
+        try {
+            const player = gameState.players[playerId];
+
+            if (!player || !player.manuallyCorrectAnswers) return;
+
+            // Clear the manual override flag for this player
+            // Only update the override status, don't change score here
+            // Score will be calculated correctly in handleRevealAnswer
+            await safeUpdate(`game/players/${playerId}`, {
+                manuallyCorrectAnswers: 0
+            }, {
+                retries: 3,
+                onError: (error) => {
+                    setErrorState({
+                        hasError: true,
+                        error: {
+                            ...error,
+                            context: 'Failed to remove manual override'
+                        },
+                        isRetrying: false,
+                        retryCount: 0
+                    });
+                }
+            });
+        } catch (error) {
+            if (error instanceof FirebaseOperationError) {
+                console.error('Failed to remove manual override after retries:', error.firebaseError);
+            }
+        } finally {
+            setOperationInProgress(null);
+        }
+    }, [gameState, operationInProgress]);
+
 
     if (!isAuthorized) {
         return (
@@ -521,8 +791,39 @@ export default function AdminPageContent() {
         }
     }
 
-    const currentQuestion = QUESTIONS[gameState.currentQuestionIndex];
-    const playerList = getPlayerList(gameState);
+    // Render quiz preview view
+    if (viewMode === 'quiz-preview') {
+        if (previewQuiz) {
+            return <QuizPreview quiz={previewQuiz} onBackToAdmin={handleBackToAdmin} />;
+        } else if (previewQuizId) {
+            // Show loading state while quiz is being fetched
+            return (
+                <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+                    <div className="text-center">
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+                        <p>Loading quiz preview...</p>
+                    </div>
+                </div>
+            );
+        }
+    }
+
+    // Render quiz edit view
+    if (viewMode === 'quiz-edit') {
+        if (previewQuiz) {
+            return <EditableQuizPreview quiz={previewQuiz} onBackToAdmin={handleBackToAdmin} />;
+        } else if (previewQuizId) {
+            // Show loading state while quiz is being fetched
+            return (
+                <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+                    <div className="text-center">
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+                        <p>Loading quiz editor...</p>
+                    </div>
+                </div>
+            );
+        }
+    }
 
     return (
         <ErrorBoundary isAdmin={true}>
@@ -540,11 +841,11 @@ export default function AdminPageContent() {
                         <div className="animate-fade-in">
                             <div className="flex items-center mb-2">
                                 <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                                    QuizApp Admin
+                                    Trivimum Admin
                                 </h1>
                             </div>
                             <div className="flex items-center text-gray-300">
-                                <p>Question {gameState.currentQuestionIndex + 1} of {QUESTIONS.length}</p>
+                                <p>Question {gameState.currentQuestionIndex + 1} of {currentQuestions.length}</p>
                             </div>
                         </div>
                         <div className="flex items-center space-x-4">
@@ -582,7 +883,7 @@ export default function AdminPageContent() {
                                         <h2 className="text-lg font-semibold text-white">{currentQuestion.text}</h2>
                                     </div>
                                 </div>
-                                <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${
+                                <ChevronDown className={`w-12 h-12 text-gray-400 transition-transform duration-200 ${
                                     isQuestionSectionCollapsed ? '' : 'rotate-180'
                                 }`}/>
                             </button>
@@ -594,11 +895,11 @@ export default function AdminPageContent() {
                                         <div className="mb-3">
                                             <span className="text-gray-400">Options: </span>
                                             <span className="text-white">
-                                                {currentQuestion.options.map((option, i) => (
+                                                {currentQuestion.options.map((option: string, i: number) => (
                                                     <span key={i}>
                                                         <span className={
                                                             (Array.isArray(currentQuestion.correctAnswer)
-                                                                ? currentQuestion.correctAnswer.some(ans => ans.toLowerCase() === option.toLowerCase())
+                                                                ? currentQuestion.correctAnswer.some((ans: string) => ans.toLowerCase() === option.toLowerCase())
                                                                 : currentQuestion.correctAnswer.toLowerCase() === option.toLowerCase())
                                                                 ? 'text-green-400 font-medium'
                                                                 : ''
@@ -624,219 +925,68 @@ export default function AdminPageContent() {
                     )}
                 </div>
 
-                {/* Player Grid */}
-                <div className="p-4 flex-1 pb-20">
-                    <h3 className="text-xl font-bold mb-4">
-                        Players ({playerList.length})
-                    </h3>
-
-                    {playerList.length === 0 ? (
-                        <div className="text-center text-gray-400 mt-8">
-                            <p>No players connected yet.</p>
-                            <p className="text-sm mt-2">Players can join at the main page.</p>
+                {/* Quiz Selection Section */}
+                {gameState.status === 'LOBBY' && !localSelectedQuizId && (
+                    isLoadingQuizzes ? (
+                        <div className="p-6 bg-gray-800 border-t border-gray-700">
+                            <div className="text-center">
+                                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+                                <p className="text-gray-400">Loading available quizzes...</p>
+                            </div>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                            {playerList.map((player, index) => (
-                                <div key={player.id || `player-${index}`}
-                                     className={`bg-gray-800 rounded-lg p-4 border ${player.currentAnswer ? 'border-green-500' : 'border-gray-700'}`}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h4 className="font-bold text-lg">{player.name}</h4>
-                                        <span className="text-blue-400 font-mono">{player.score}</span>
-                                    </div>
+                        <QuizSelection
+                            availableQuizzes={availableQuizzes}
+                            operationInProgress={operationInProgress}
+                            onSelectQuiz={handleSelectQuiz}
+                            onPreviewQuestions={handlePreviewQuestions}
+                            onEditQuiz={handleEditQuiz}
+                            onCreateNewQuiz={handleCreateNewQuiz}
+                        />
+                    )
+                )}
 
-                                    <div className="space-y-2 text-sm">
-                                        {player.currentAnswer && (
-                                            <div>
-                                                <span className="text-gray-400">Submitted: </span>
-                                                <span className="text-white font-medium">{player.currentAnswer}</span>
-                                            </div>
-                                        )}
+                {/* Current Quiz Info */}
+                {gameState.status === 'LOBBY' && localSelectedQuizId && currentQuiz && (
+                    <CurrentQuizInfo
+                        quiz={currentQuiz}
+                        operationInProgress={operationInProgress}
+                        onClearQuizSelection={handleClearQuizSelection}
+                    />
+                )}
 
-                                        {player.liveTyping && !player.currentAnswer && (
-                                            <div>
-                                                <span className="text-gray-400">Typing: </span>
-                                                <span
-                                                    className="text-yellow-400 font-medium">{player.liveTyping}...</span>
-                                            </div>
-                                        )}
-
-                                        {!player.currentAnswer && !player.liveTyping && gameState.status === 'QUESTION_ACTIVE' && (
-                                            <div className="text-gray-500">No response yet</div>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                {/* Player Grid */}
+                <PlayerGrid
+                    players={playerList}
+                    gameState={gameState}
+                    currentQuestion={currentQuestion}
+                    operationInProgress={operationInProgress}
+                    onManualOverride={handleManualOverride}
+                    onRemoveOverride={handleRemoveOverride}
+                />
 
                 {/* Floating Action Button Control Panel */}
-                <div className="fixed bottom-6 right-20">
-                    {/* Operation Status Notification */}
-                    {operationInProgress && (
-                        <div
-                            className="mb-4 bg-yellow-900/90 backdrop-blur-sm border border-yellow-500/50 rounded-lg p-3 text-center animate-fade-in shadow-lg">
-                            <div className="flex items-center justify-center text-yellow-300 text-sm">
-                                <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                Processing {operationInProgress}...
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Error Notification */}
-                    {errorState.hasError && !['permission-denied', 'not-found', 'failed-precondition', 'invalid-config'].includes(errorState.error?.code || '') && (
-                        <div
-                            className="mb-4 bg-red-900/90 backdrop-blur-sm border border-red-500/50 rounded-lg p-3 animate-fade-in shadow-lg">
-                            <p className="text-red-200 text-sm text-center">
-                                {errorState.error?.context || 'An error occurred'}
-                            </p>
-                            <button
-                                onClick={() => setErrorState(prev => ({...prev, hasError: false, error: null}))}
-                                className="w-full text-red-400 hover:text-red-300 underline text-xs mt-2 flex items-center justify-center"
-                            >
-                                <X className="w-3 h-3 mr-1"/>
-                                Dismiss
-                            </button>
-                        </div>
-                    )}
-
-                    {/* Expanded Control Panel */}
-                    {isControlPanelExpanded && (
-                        <div
-                            className="mb-4 bg-gray-800/95 backdrop-blur-sm border border-gray-600 rounded-xl p-4 shadow-2xl fab-panel max-w-sm">
-                            <div className="flex flex-col gap-3">
-                                {/* Primary Action Buttons */}
-                                {gameState.status === 'LOBBY' && (
-                                    <button
-                                        onClick={handleStartQuestion}
-                                        disabled={!!operationInProgress}
-                                        className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center shadow-lg"
-                                    >
-                                        {operationInProgress === 'startQuestion' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                        ) : (
-                                            <Play className="w-4 h-4 mr-2"/>
-                                        )}
-                                        Start Question
-                                    </button>
-                                )}
-
-                                {gameState.status === 'QUESTION_ACTIVE' && (
-                                    <button
-                                        onClick={handleRevealAnswer}
-                                        disabled={!!operationInProgress}
-                                        className="w-full bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center shadow-lg"
-                                    >
-                                        {operationInProgress === 'revealAnswer' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                        ) : (
-                                            <Eye className="w-4 h-4 mr-2"/>
-                                        )}
-                                        Reveal Answer
-                                    </button>
-                                )}
-                                {(gameState.status === 'REVEAL_ANSWER' || gameState.status === 'LEADERBOARD') && (
-                                    <div className="flex gap-2">
-                                        {gameState.currentQuestionIndex > 0 && (
-                                            <button
-                                                onClick={handlePreviousQuestion}
-                                                disabled={!!operationInProgress}
-                                                className="flex-1 bg-gradient-to-r from-gray-600 to-slate-600 hover:from-gray-700 hover:to-slate-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-3 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center shadow-lg text-sm"
-                                            >
-                                                {operationInProgress === 'previousQuestion' ? (
-                                                    <Loader2 className="w-4 h-10 animate-spin"/>
-                                                ) : (
-                                                    <>
-                                                        <SkipBack className="w-4 h-6 mr-1"/>
-                                                        Prev
-                                                    </>
-                                                )}
-                                            </button>
-                                        )}
-                                        {gameState.currentQuestionIndex < QUESTIONS.length - 1 && (
-                                            <button
-                                                onClick={handleNextQuestion}
-                                                disabled={!!operationInProgress}
-                                                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-3 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center shadow-lg text-sm"
-                                            >
-                                                {operationInProgress === 'nextQuestion' ? (
-                                                    <Loader2 className="w-4 h-4 animate-spin"/>
-                                                ) : (
-                                                    <>
-                                                        <SkipForward className="w-4 h-4 mr-1"/>
-                                                        Next
-                                                    </>
-                                                )}
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-
-                                {/* Leaderboard Controls */}
-                                {gameState.status !== 'LEADERBOARD' ? (
-                                    <button
-                                        onClick={handleShowLeaderboard}
-                                        disabled={!!operationInProgress}
-                                        className="w-full bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center shadow-lg"
-                                    >
-                                        {operationInProgress === 'showLeaderboard' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                        ) : (
-                                            <Trophy className="w-4 h-4 mr-2"/>
-                                        )}
-                                        Show Leaderboard
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={handleHideLeaderboard}
-                                        disabled={!!operationInProgress}
-                                        className="w-full bg-gradient-to-r from-gray-600 to-slate-600 hover:from-gray-700 hover:to-slate-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center shadow-lg"
-                                    >
-                                        {operationInProgress === 'hideLeaderboard' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                        ) : (
-                                            <EyeOff className="w-4 h-4 mr-2"/>
-                                        )}
-                                        Hide Leaderboard
-                                    </button>
-                                )}
-
-                                {/* Danger Zone */}
-                                <div className="pt-2 border-t border-gray-600/50">
-                                    <button
-                                        onClick={handleResetGame}
-                                        disabled={!!operationInProgress}
-                                        className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center shadow-lg"
-                                    >
-                                        {operationInProgress === 'resetGame' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2"/>
-                                        ) : (
-                                            <RefreshCw className="w-4 h-4 mr-2"/>
-                                        )}
-                                        Reset Game
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* FAB Toggle Button */}
-                    <button
-                        onClick={() => setIsControlPanelExpanded(!isControlPanelExpanded)}
-                        className={`fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-full fab-button flex items-center justify-center group ${
-                            isControlPanelExpanded ? 'rotate-45 scale-110' : 'hover:scale-110'
-                        }`}
-                    >
-                        {isControlPanelExpanded ? (
-                            <X className="w-6 h-6 text-white transition-transform duration-200"/>
-                        ) : (
-                            <Settings
-                                className="w-6 h-6 text-white group-hover:rotate-90 transition-transform duration-200"/>
-                        )}
-                    </button>
-                </div>
+                <ControlPanel
+                    gameState={gameState}
+                    currentQuestions={currentQuestions}
+                    localSelectedQuizId={localSelectedQuizId}
+                    operationInProgress={operationInProgress}
+                    errorState={errorState}
+                    isControlPanelExpanded={isControlPanelExpanded}
+                    onToggleControlPanel={() => setIsControlPanelExpanded(!isControlPanelExpanded)}
+                    onStartQuestion={handleStartQuestion}
+                    onRevealAnswer={handleRevealAnswer}
+                    onNextQuestion={handleNextQuestion}
+                    onPreviousQuestion={handlePreviousQuestion}
+                    onShowLeaderboard={handleShowLeaderboard}
+                    onHideLeaderboard={handleHideLeaderboard}
+                    onResetGame={handleResetGame}
+                    onDismissError={() => setErrorState(prev => ({...prev, hasError: false, error: null}))}
+                />
             </div>
         </ErrorBoundary>
     );
 }
+
+// Export memoized component to prevent unnecessary rerenders
+export default memo(AdminPageContent);
